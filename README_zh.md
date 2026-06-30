@@ -10,6 +10,10 @@
 
 把信号灯放在笔记本旁边，不用盯着终端，用余光就知道 Agent 在干什么。
 
+![效果演示](static/image.jpg)
+
+<video src="static/video.mp4" controls width="600"></video>
+
 | 灯效 | Agent 状态 | 你该做什么 |
 | --- | --- | --- |
 | 绿灯常亮 | 空闲 | 不用管 |

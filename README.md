@@ -10,6 +10,10 @@ This is an ESP8266 port of [vibecoding-signal-light](https://github.com/starligh
 
 Place the signal light beside your laptop — no need to watch the terminal; a glance tells you what your agent is doing.
 
+![Effect demo](static/image.jpg)
+
+<video src="static/video.mp4" controls width="600"></video>
+
 | Light Pattern | Agent Status | What to Do |
 | --- | --- | --- |
 | Solid green | Idle | Nothing |
