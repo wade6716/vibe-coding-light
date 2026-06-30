@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "signal-light-esp"
+version = "0.1.0"
+description = "WiFi traffic-light status display for AI coding agents (ESP8266)."
+requires-python = ">=3.11"
+keywords = [
+    "ai-agent",
+    "esp8266",
+    "signal-light",
+    "traffic-light",
+    "claude-code",
+    "codex",
+]
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[project.scripts]
+signal-light = "signal_light.cli:main"
+codex-signal-hook = "signal_light.codex_hook:main"
+claude-code-signal-hook = "signal_light.claude_code_hook:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["signal_light"]
