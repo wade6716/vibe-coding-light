@@ -25,6 +25,7 @@ With Bark configured, `blocked`, `permission`, and `attention` signals are also 
 
 - **Claude Code** — automatic notifications via hook adapter
 - **Codex** — automatic notifications via hook adapter
+- **Antigravity** — automatic notifications via hook adapter
 - **Manual** — via the `signal-light` CLI
 
 ## Hardware
@@ -113,6 +114,9 @@ uv run signal-light install-hooks --agent claude-code -y
 
 # Or just Codex
 uv run signal-light install-hooks --agent codex -y
+
+# Or just Antigravity
+uv run signal-light install-hooks --agent antigravity -y
 ```
 
 ### 5. Configure Bark push notifications (optional)
@@ -289,6 +293,23 @@ echo '{"event":"Notification","session_id":"demo"}' | ./scripts/claude-code-sign
 | `PermissionRequest` | Red flash |
 | `Stop` | Clear work state |
 | `SessionEnd` | Green flash (done) |
+
+## Antigravity Integration
+
+```bash
+./scripts/antigravity-signal-hook PreToolUse
+./scripts/antigravity-signal-hook PostToolUse
+./scripts/antigravity-signal-hook PreInvocation
+./scripts/antigravity-signal-hook Stop
+```
+
+| Antigravity Event | Light Behavior |
+| --- | --- |
+| `PreToolUse` | Work cycle (or permission/attention depending on tool type) |
+| `PostToolUse` | Tool done (or blocked on error) |
+| `PreInvocation` | Thinking |
+| `PostInvocation` | Tool done |
+| `Stop` | Blocked (error) / Session done (idle) / Turn end |
 
 ## Multi-Session Behavior
 

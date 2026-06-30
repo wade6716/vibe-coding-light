@@ -25,6 +25,7 @@
 
 - **Claude Code** — 通过 hook 适配器自动通知
 - **Codex** — 通过 hook 适配器自动通知
+- **Antigravity** — 通过 hook 适配器自动通知
 - **手动触发** — 通过 `signal-light` CLI 命令
 
 ## 硬件
@@ -113,6 +114,9 @@ uv run signal-light install-hooks --agent claude-code -y
 
 # 或只安装 Codex
 uv run signal-light install-hooks --agent codex -y
+
+# 或只安装 Antigravity
+uv run signal-light install-hooks --agent antigravity -y
 ```
 
 ### 5. 配置 Bark 推送通知（可选）
@@ -289,6 +293,23 @@ echo '{"event":"Notification","session_id":"demo"}' | ./scripts/claude-code-sign
 | `PermissionRequest` | 红灯闪烁 |
 | `Stop` | 清理普通工作态 |
 | `SessionEnd` | 绿灯短闪提示完成 |
+
+## Antigravity 集成
+
+```bash
+./scripts/antigravity-signal-hook PreToolUse
+./scripts/antigravity-signal-hook PostToolUse
+./scripts/antigravity-signal-hook PreInvocation
+./scripts/antigravity-signal-hook Stop
+```
+
+| Antigravity 事件 | 灯效行为 |
+| --- | --- |
+| `PreToolUse` | 工作循环（根据工具类型可能触发权限/关注提醒） |
+| `PostToolUse` | 工具完成（出错时红灯阻塞） |
+| `PreInvocation` | 思考中 |
+| `PostInvocation` | 工具完成 |
+| `Stop` | 阻塞（出错）/ 会话完成（空闲）/ 本轮结束 |
 
 ## 多会话行为
 
