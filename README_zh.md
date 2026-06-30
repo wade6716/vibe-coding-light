@@ -176,47 +176,53 @@ uv run signal-light status
 
 ## HTTP API
 
-ESP8266 运行 HTTP 服务器，可以直接用 `curl` 测试：
+ESP8266 运行一个简单的灯效播放器，所有会话管理和聚合逻辑由 Python 客户端处理。
 
 ```bash
-# 发送信号
-curl -X POST http://signal-light.local/signal \
+# 设置灯效
+curl -X POST http://signal-light.local/pattern \
   -H 'Content-Type: application/json' \
-  -d '{"signal":"working","session_id":"test1"}'
+  -d '{"pattern":"flash_yellow","timeout":300}'
 
 # 查看状态
 curl http://signal-light.local/status
 
-# 重置
+# 重置（关闭所有灯）
 curl -X POST http://signal-light.local/reset
 ```
 
-### POST /signal
+### POST /pattern
 
 ```json
 {
-  "signal": "working",
-  "session_id": "abc123"
+  "pattern": "flash_yellow",
+  "timeout": 300
 }
 ```
 
-支持的信号名：`idle`, `thinking`, `working`, `tool_done`, `attention`, `permission`, `blocked`, `done`, `session_start`, `session_end`, `session_done`, `off`, `turn_end`
+| Pattern | 灯效 |
+| --- | --- |
+| `off` | 全灭 |
+| `green_on` | 绿灯常亮 |
+| `work_cycle` | 绿→黄→红循环（每色 600ms，循环） |
+| `flash_yellow` | 黄灯闪烁（120ms 亮 / 100ms 灭，循环） |
+| `flash_red` | 红灯闪烁（120ms 亮 / 100ms 灭，循环） |
+| `notice_green` | 绿灯短闪 ×6（180ms 亮 / 140ms 灭），然后自动关闭 |
+
+`timeout`（可选）：超时秒数，到期后自动恢复 `off`，防止 Python 端崩溃导致灯一直亮。
 
 ### GET /status
 
 ```json
 {
-  "aggregate": "working",
-  "pattern": "work_cycle",
-  "sessions": {
-    "abc123": {"signal": "working", "age_seconds": 42}
-  }
+  "pattern": "flash_yellow",
+  "leds": {"red": false, "yellow": true, "green": false}
 }
 ```
 
 ### POST /reset
 
-清除所有会话，关闭所有灯。
+关闭所有灯。
 
 ## 环境变量
 
@@ -236,46 +242,41 @@ vibe-coding-signal-light-esp8266/
 ├── firmware/
 │   ├── platformio.ini          # PlatformIO 配置
 │   ├── include/config.h        # 引脚和时序常量
-│   └── src/main.cpp            # ESP8266 固件
+│   └── src/main.cpp            # ESP8266 灯效播放器（~300 行）
 ├── client/
 │   ├── pyproject.toml
 │   ├── .env.example            # 环境变量模板
 │   ├── signal_light/
 │   │   ├── agent_signals.py    # 灯语信号定义
+│   │   ├── session_manager.py  # 会话状态 + 聚合 + pattern 映射
 │   │   ├── esp.py              # HTTP 客户端 + mDNS 发现
 │   │   ├── bark.py             # Bark 推送通知
 │   │   ├── claude_code_hook.py # Claude Code hook 适配器
 │   │   ├── codex_hook.py       # Codex hook 适配器
+│   │   ├── antigravity_hook.py # Antigravity hook 适配器
 │   │   ├── hook_installer.py   # Hook 安装向导
 │   │   └── cli.py              # CLI 入口
 │   ├── scripts/                # Shell 脚本封装
 │   └── tests/                  # 单元测试
 ├── docs/
 │   └── wiring.md               # 接线文档
+├── static/
+│   └── demo.gif                # 效果演示
 └── README.md
 ```
 
 ## Claude Code 集成
 
-Claude Code 通过 stdin 传入 JSON hook 数据：
+6 个 hook 事件覆盖完整生命周期——进行中、需要介入、已完成：
 
-```bash
-echo '{"event":"PreToolUse","session_id":"demo"}' | ./scripts/claude-code-signal-hook
-echo '{"event":"PermissionRequest","session_id":"demo"}' | ./scripts/claude-code-signal-hook
-echo '{"event":"Notification","session_id":"demo"}' | ./scripts/claude-code-signal-hook
-```
-
-| Claude Code 事件 | 灯效行为 |
-| --- | --- |
-| `SessionStart` | 绿灯空闲 |
-| `UserPromptSubmit` | 工作循环 |
-| `PreToolUse` | 工作循环 |
-| `PostToolUse` | 工作循环 |
-| `PostToolUseFailure` | 红灯闪烁 |
-| `Notification` | 黄灯闪烁 |
-| `PermissionRequest` | 红灯闪烁 |
-| `Stop` | 清理普通工作态 |
-| `SessionEnd` | 绿灯短闪提示完成 |
+| Claude Code 事件 | 信号 | 灯效 | 状态 |
+| --- | --- | --- | --- |
+| `UserPromptSubmit` | `thinking` | 🔄 绿黄红循环 | 进行中 |
+| `PreToolUse` | `working` | 🔄 绿黄红循环 | 进行中 |
+| `PostToolUse` | `tool_done` | 🔄 绿黄红循环 | 进行中 |
+| `PostToolUseFailure` | `blocked` | 🔴 红灯闪烁 | 需要介入 |
+| `PermissionRequest` | `permission` | 🟡 黄灯闪烁 | 需要介入 |
+| `Stop` | `turn_end` | 🟢 绿灯短闪 ×6，然后绿灯常亮 | 已完成 |
 
 ## Codex 集成
 
@@ -315,13 +316,15 @@ echo '{"event":"Notification","session_id":"demo"}' | ./scripts/claude-code-sign
 
 ## 多会话行为
 
-ESP8266 维护每个会话的状态，按优先级聚合显示：
+Python 客户端（`session_manager.py`）在 `/tmp/signal-light-sessions.json` 中维护每个会话的状态，按优先级计算聚合 pattern：
 
 ```
-红灯闪烁 > 黄灯闪烁 > 工作循环 > 绿灯常亮
+blocked (🔴) > permission (🟡) > attention (🟡) > working (🔄) > idle (🟢)
 ```
 
-一个会话等待权限时，即使另一个会话开始工作，红灯也不会被覆盖。
+一个会话等待权限时，即使另一个会话开始工作，红灯也不会被覆盖。ESP8266 只负责播放 Python 客户端告诉它的灯效。
+
+**已结束会话跟踪**：会话结束后（`session_end`、`session_done`、`turn_end`），该会话的后续信号会被忽略 10 分钟，防止灯被意外重新点亮。
 
 ## WiFi 重新配置
 
@@ -337,11 +340,12 @@ ESP8266 维护每个会话的状态，按优先级聚合显示：
 | --- | --- | --- |
 | 硬件控制 | Python EasyMCP2221 库，USB GPIO | HTTP POST 到 ESP8266 WiFi 服务器 |
 | 动画 | Python 后台 worker 进程 | ESP8266 固件 millis() 状态机 |
-| 会话状态 | /tmp/signal-light/ JSON 文件 | ESP8266 内存数组 |
+| 会话状态 | /tmp/signal-light/ JSON 文件 | Python 客户端 JSON 文件 (/tmp/signal-light-sessions.json) |
+| 业务逻辑 | Python | Python（session_manager.py） |
 | Python 依赖 | EasyMCP2221 | 无（仅 stdlib） |
 | 设备发现 | 本地 USB | mDNS + 环境变量回退 |
 | 配网 | 无 | WiFiManager 热点配网 |
-| 亮度控制 | 布尔开/关 | 10-bit PWM 软脉冲 |
+| 亮度控制 | 布尔开/关 | 布尔开/关 |
 
 ## 运行测试
 

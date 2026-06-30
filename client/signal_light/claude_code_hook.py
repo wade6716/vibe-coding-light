@@ -77,7 +77,10 @@ def choose_signal(hook_input: ClaudeCodeHookInput) -> str:
             logger.info("事件为 Stop，基于 stop_reason=%s 决定播放: %s", stop_reason, sig)
             return sig
 
-    sig = EVENT_TO_SIGNAL.get(hook_input.event_name, "attention")
+    sig = EVENT_TO_SIGNAL.get(hook_input.event_name)
+    if sig is None:
+        logger.info("事件 %s 未映射，忽略", hook_input.event_name)
+        return None
     logger.info("依据事件名 %s 映射决定播放信号: %s", hook_input.event_name, sig)
     return sig
 
@@ -127,9 +130,19 @@ def main() -> int:
     key = session_key(hook_input, os.environ)
     logger.info("Claude Code Hook 决策: 选择信号=%s, Session Key=%s", signal, key)
 
+    if signal is None:
+        return 0
+
+    from signal_light.session_manager import SessionManager
+    mgr = SessionManager()
+    result = mgr.handle_signal(key, signal)
+
     try:
         conn = esp.get_connection()
-        esp.send_signal(conn, signal, session_id=key)
+        if result.notice_first:
+            esp.send_pattern(conn, "notice_green")
+            import time; time.sleep(2.0)
+        esp.send_pattern(conn, result.pattern, timeout=300)
     except esp.ESPConnectionError as exc:
         logger.error("发送信号失败: %s", exc, exc_info=True)
         print(str(exc), file=sys.stderr)

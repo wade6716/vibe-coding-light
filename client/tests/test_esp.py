@@ -54,7 +54,7 @@ def test_get_connection_returns_connection_with_env_host(monkeypatch) -> None:
     assert conn.base_url == "http://10.0.0.5:80"
 
 
-def test_send_signal_builds_correct_request(monkeypatch) -> None:
+def test_send_pattern_builds_correct_request(monkeypatch) -> None:
     monkeypatch.setenv("SIGNAL_LIGHT_HOST", "192.168.1.1")
     captured = {}
 
@@ -73,25 +73,25 @@ def test_send_signal_builds_correct_request(monkeypatch) -> None:
         conn = esp.get_connection()
 
     with patch.object(esp._no_proxy_opener, "open", side_effect=fake_urlopen):
-        result = esp.send_signal(conn, "working", session_id="test123")
+        result = esp.send_pattern(conn, "flash_yellow", timeout=300)
 
-    assert captured["url"] == "http://192.168.1.1:80/signal"
+    assert captured["url"] == "http://192.168.1.1:80/pattern"
     assert captured["method"] == "POST"
     body = json.loads(captured["data"])
-    assert body == {"signal": "working", "session_id": "test123"}
+    assert body == {"pattern": "flash_yellow", "timeout": 300}
     assert result["ok"] is True
     assert result["aggregate"] == "working"
 
 
-def test_send_signal_raises_on_connection_error(monkeypatch) -> None:
+def test_send_pattern_raises_on_connection_error(monkeypatch) -> None:
     monkeypatch.setenv("SIGNAL_LIGHT_HOST", "192.168.1.1")
 
     with patch("socket.getaddrinfo", side_effect=OSError("no mDNS")):
         conn = esp.get_connection()
 
     with patch.object(esp._no_proxy_opener, "open", side_effect=OSError("connection refused")):
-        with pytest.raises(esp.ESPConnectionError, match="Failed to send signal"):
-            esp.send_signal(conn, "idle")
+        with pytest.raises(esp.ESPConnectionError, match="Failed to send pattern"):
+            esp.send_pattern(conn, "green_on")
 
 
 def test_get_status_builds_correct_request(monkeypatch) -> None:

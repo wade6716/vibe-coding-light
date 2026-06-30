@@ -176,47 +176,53 @@ uv run signal-light status
 
 ## HTTP API
 
-The ESP8266 runs an HTTP server. Test it directly with `curl`:
+The ESP8266 runs a simple pattern player. The Python client handles all session management and aggregation logic.
 
 ```bash
-# Send a signal
-curl -X POST http://signal-light.local/signal \
+# Set a pattern
+curl -X POST http://signal-light.local/pattern \
   -H 'Content-Type: application/json' \
-  -d '{"signal":"working","session_id":"test1"}'
+  -d '{"pattern":"flash_yellow","timeout":300}'
 
 # Get status
 curl http://signal-light.local/status
 
-# Reset
+# Reset (turn off all LEDs)
 curl -X POST http://signal-light.local/reset
 ```
 
-### POST /signal
+### POST /pattern
 
 ```json
 {
-  "signal": "working",
-  "session_id": "abc123"
+  "pattern": "flash_yellow",
+  "timeout": 300
 }
 ```
 
-Supported signals: `idle`, `thinking`, `working`, `tool_done`, `attention`, `permission`, `blocked`, `done`, `session_start`, `session_end`, `session_done`, `off`, `turn_end`
+| Pattern | LED Behavior |
+| --- | --- |
+| `off` | All LEDs off |
+| `green_on` | Solid green |
+| `work_cycle` | Green → Yellow → Red cycle (600ms each, looping) |
+| `flash_yellow` | Yellow flash (120ms on / 100ms off, looping) |
+| `flash_red` | Red flash (120ms on / 100ms off, looping) |
+| `notice_green` | Green flash ×6 (180ms on / 140ms off), then auto-off |
+
+`timeout` (optional): seconds before auto-reverting to `off`. Prevents stuck LEDs if the Python client crashes.
 
 ### GET /status
 
 ```json
 {
-  "aggregate": "working",
-  "pattern": "work_cycle",
-  "sessions": {
-    "abc123": {"signal": "working", "age_seconds": 42}
-  }
+  "pattern": "flash_yellow",
+  "leds": {"red": false, "yellow": true, "green": false}
 }
 ```
 
 ### POST /reset
 
-Clears all sessions and turns off all LEDs.
+Turns off all LEDs.
 
 ## Environment Variables
 
@@ -236,46 +242,41 @@ vibe-coding-signal-light-esp8266/
 ├── firmware/
 │   ├── platformio.ini          # PlatformIO config
 │   ├── include/config.h        # Pin and timing constants
-│   └── src/main.cpp            # ESP8266 firmware
+│   └── src/main.cpp            # ESP8266 pattern player (~300 lines)
 ├── client/
 │   ├── pyproject.toml
 │   ├── .env.example            # Environment variable template
 │   ├── signal_light/
 │   │   ├── agent_signals.py    # Signal definitions
+│   │   ├── session_manager.py  # Session state + aggregation + pattern mapping
 │   │   ├── esp.py              # HTTP client + mDNS discovery
 │   │   ├── bark.py             # Bark push notifications
 │   │   ├── claude_code_hook.py # Claude Code hook adapter
 │   │   ├── codex_hook.py       # Codex hook adapter
+│   │   ├── antigravity_hook.py # Antigravity hook adapter
 │   │   ├── hook_installer.py   # Hook installation wizard
 │   │   └── cli.py              # CLI entry point
 │   ├── scripts/                # Shell script wrappers
 │   └── tests/                  # Unit tests
 ├── docs/
 │   └── wiring.md               # Wiring guide
+├── static/
+│   └── demo.gif                # Effect demo
 └── README.md
 ```
 
 ## Claude Code Integration
 
-Claude Code sends JSON hook data via stdin:
+6 hook events cover the full lifecycle — working, needs attention, and done:
 
-```bash
-echo '{"event":"PreToolUse","session_id":"demo"}' | ./scripts/claude-code-signal-hook
-echo '{"event":"PermissionRequest","session_id":"demo"}' | ./scripts/claude-code-signal-hook
-echo '{"event":"Notification","session_id":"demo"}' | ./scripts/claude-code-signal-hook
-```
-
-| Claude Code Event | Light Behavior |
-| --- | --- |
-| `SessionStart` | Solid green (idle) |
-| `UserPromptSubmit` | Work cycle |
-| `PreToolUse` | Work cycle |
-| `PostToolUse` | Work cycle |
-| `PostToolUseFailure` | Red flash |
-| `Notification` | Yellow flash |
-| `PermissionRequest` | Red flash |
-| `Stop` | Clear work state |
-| `SessionEnd` | Green flash (done) |
+| Claude Code Event | Signal | Light Effect | Status |
+| --- | --- | --- | --- |
+| `UserPromptSubmit` | `thinking` | 🔄 Green/yellow/red cycle | Working |
+| `PreToolUse` | `working` | 🔄 Green/yellow/red cycle | Working |
+| `PostToolUse` | `tool_done` | 🔄 Green/yellow/red cycle | Working |
+| `PostToolUseFailure` | `blocked` | 🔴 Red flash | Needs attention |
+| `PermissionRequest` | `permission` | 🟡 Yellow flash | Needs attention |
+| `Stop` | `turn_end` | 🟢 Green flash ×6, then solid green | Done |
 
 ## Codex Integration
 
@@ -315,13 +316,15 @@ echo '{"event":"Notification","session_id":"demo"}' | ./scripts/claude-code-sign
 
 ## Multi-Session Behavior
 
-The ESP8266 maintains per-session state and displays the highest priority:
+The Python client (`session_manager.py`) maintains per-session state in `/tmp/signal-light-sessions.json` and computes the highest-priority pattern:
 
 ```
-Red flash > Yellow flash > Work cycle > Solid green
+blocked (🔴) > permission (🟡) > attention (🟡) > working (🔄) > idle (🟢)
 ```
 
-When one session is waiting for permission, the red flash won't be overridden even if another session starts working.
+When one session is waiting for permission, the red flash won't be overridden even if another session starts working. The ESP8266 simply plays whatever pattern the Python client tells it to.
+
+**Ended session tracking**: after a session ends (`session_end`, `session_done`, `turn_end`), stale signals for that session are ignored for 10 minutes to prevent re-lighting.
 
 ## WiFi Reset
 
@@ -337,11 +340,12 @@ To change WiFi networks:
 | --- | --- | --- |
 | Hardware control | Python EasyMCP2221, USB GPIO | HTTP POST to ESP8266 WiFi server |
 | Animation | Python background worker | ESP8266 firmware millis() state machine |
-| Session state | /tmp/signal-light/ JSON files | ESP8266 in-memory array |
+| Session state | /tmp/signal-light/ JSON files | Python client JSON file (/tmp/signal-light-sessions.json) |
+| Business logic | Python | Python (session_manager.py) |
 | Python dependencies | EasyMCP2221 | None (stdlib only) |
 | Device discovery | Local USB | mDNS + env var fallback |
 | WiFi provisioning | None | WiFiManager captive portal |
-| Brightness control | Boolean on/off | 10-bit PWM soft pulse |
+| Brightness control | Boolean on/off | Boolean on/off |
 
 ## Running Tests
 

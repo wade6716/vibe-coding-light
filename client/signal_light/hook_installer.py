@@ -28,18 +28,12 @@ CODEX_EVENTS = {
 }
 
 CLAUDE_CODE_EVENTS = {
-    "SessionStart": 5,
     "UserPromptSubmit": 5,
     "PreToolUse": 5,
     "PostToolUse": 5,
     "PostToolUseFailure": 5,
-    "PreCompact": 5,
-    "SubagentStart": 5,
-    "SubagentStop": 5,
     "PermissionRequest": 10,
-    "Notification": 5,
     "Stop": 5,
-    "SessionEnd": 5,
 }
 
 ANTIGRAVITY_EVENTS = {

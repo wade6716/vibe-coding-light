@@ -12,18 +12,6 @@
 #define HOSTNAME      "signal-light"
 #define AP_SSID       "Signal-Light-Setup"
 
-// Session management
-#define SESSION_TTL_SECONDS  86400UL   // 24 hours
-#define MAX_SESSIONS         32
-#define IDLE_SLEEP_MS        600000UL  // 10 minutes
-
-// Work cycle soft-pulse (PWM 0-1023, active-high)
-// Reference brightness: 0.10, 0.18, 0.32, 0.50, 0.68, 0.50, 0.32, 0.18, 0.10
-// PWM = (int)(brightness * 1023)
-#define PULSE_STEPS 9
-static const int PULSE_PWM[PULSE_STEPS] = {102, 185, 328, 512, 696, 512, 328, 185, 102};
-#define PULSE_STEP_MS 160
-
 // Flash timing
 #define FLASH_ON_MS   120
 #define FLASH_OFF_MS  100
@@ -32,5 +20,8 @@ static const int PULSE_PWM[PULSE_STEPS] = {102, 185, 328, 512, 696, 512, 328, 18
 #define NOTICE_ON_MS  180
 #define NOTICE_OFF_MS 140
 #define NOTICE_LOOPS  6
+
+// Work cycle: 600ms per color phase (green -> yellow -> red)
+#define WORK_CYCLE_PHASE_MS 600
 
 #endif // CONFIG_H

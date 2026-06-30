@@ -122,8 +122,8 @@ def choose_signal(hook_input: AntigravityHookInput) -> str:
         logger.info("本次 Turn 结束, 但任务未完成, 决定播放: turn_end")
         return "turn_end"
 
-    logger.info("未知或未匹配事件 %s, 默认播放: attention", event)
-    return "attention"
+    logger.info("未知或未匹配事件 %s，忽略", event)
+    return None
 
 
 def session_key(hook_input: AntigravityHookInput, environ: Mapping[str, str]) -> str:
@@ -177,4 +177,46 @@ def _event_from_args(argv: list[str]) -> str | None:
     if len(argv) >= 2 and not argv[1].startswith("-"):
         return argv[1]
     return None
+
+
+def main() -> int:
+    logger.info("Antigravity Hook 脚本单独启动")
+    from signal_light import esp
+    from signal_light import bark
+    from signal_light.session_manager import SessionManager
+
+    stdin_text = sys.stdin.read() if not sys.stdin.isatty() else ""
+    logger.debug("读取到的 stdin 内容: %s", stdin_text)
+    hook_input = read_hook_input(sys.argv, stdin_text)
+    signal = choose_signal(hook_input)
+    key = session_key(hook_input, os.environ)
+    logger.info("Antigravity Hook 决策: 选择信号=%s, Session Key=%s", signal, key)
+
+    output = process_and_get_output(hook_input)
+
+    if signal is not None:
+        try:
+            mgr = SessionManager()
+            result = mgr.handle_signal(key, signal)
+            conn = esp.get_connection()
+            if result.notice_first:
+                esp.send_pattern(conn, "notice_green")
+                import time; time.sleep(2.0)
+            esp.send_pattern(conn, result.pattern, timeout=300)
+        except Exception as exc:
+            logger.error("发送信号失败: %s", exc, exc_info=True)
+            print(str(exc), file=sys.stderr)
+
+    bark_url = os.environ.get("BARK_SERVER_URL", "").strip()
+    if signal is not None and bark_url and bark.should_notify(signal):
+        logger.info("触发 Bark 推送通知...")
+        bark.notify(bark_url, signal, session_id=key)
+
+    print(json.dumps(output))
+    logger.info("Antigravity Hook 脚本执行完成")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
 

@@ -72,12 +72,27 @@ def get_connection() -> ESPConnection:
     return conn
 
 
-def send_signal(conn: ESPConnection, signal: str, session_id: str = "global") -> dict[str, Any]:
-    """POST /signal to the ESP8266."""
-    payload_dict = {"signal": signal, "session_id": session_id}
+def send_pattern(
+    conn: ESPConnection,
+    pattern: str,
+    timeout: int | None = None,
+) -> dict[str, Any]:
+    """POST /pattern to the ESP8266.
+
+    Args:
+        conn: ESP connection
+        pattern: One of 'off', 'green_on', 'work_cycle', 'flash_yellow', 'flash_red', 'notice_green'
+        timeout: Optional timeout in seconds; pattern auto-reverts to 'off' after this duration
+
+    Returns: dict from JSON response
+    Raises: ESPConnectionError on network failure
+    """
+    payload_dict: dict[str, Any] = {"pattern": pattern}
+    if timeout is not None:
+        payload_dict["timeout"] = timeout
     payload = json.dumps(payload_dict).encode()
-    url = f"{conn.base_url}/signal"
-    logger.info("向 ESP8266 发送信号: signal=%s, session_id=%s, url=%s", signal, session_id, url)
+    url = f"{conn.base_url}/pattern"
+    logger.info("向 ESP8266 发送模式: pattern=%s, timeout=%s, url=%s", pattern, timeout, url)
     req = urllib.request.Request(
         url, data=payload, headers={"Content-Type": "application/json"}, method="POST"
     )
@@ -89,13 +104,17 @@ def send_signal(conn: ESPConnection, signal: str, session_id: str = "global") ->
             logger.info("ESP8266 响应成功: %s", result)
             return result
     except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
-        err_msg = f"Failed to send signal to {conn.host}: {exc}"
+        err_msg = f"Failed to send pattern to {conn.host}: {exc}"
         logger.error(err_msg, exc_info=True)
         raise ESPConnectionError(err_msg) from exc
 
 
 def get_status(conn: ESPConnection) -> dict[str, Any]:
-    """GET /status from the ESP8266."""
+    """GET /status from the ESP8266.
+
+    Returns a dict like:
+        {"pattern": "...", "leds": {"red": bool, "yellow": bool, "green": bool}}
+    """
     url = f"{conn.base_url}/status"
     logger.debug("获取 ESP8266 状态: %s", url)
     try:

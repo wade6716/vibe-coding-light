@@ -14,6 +14,7 @@ from typing import Sequence
 
 from signal_light.agent_signals import SIGNALS
 from signal_light import esp
+from signal_light.session_manager import SessionManager
 
 # 初始化模块级别的 Logger
 logger = logging.getLogger("signal_light.cli")
@@ -121,6 +122,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         signal = choose_signal(hook_input)
         key = session_key(hook_input, os.environ)
         logger.info("Codex Hook 决策结果: 选择信号=%s, Session Key=%s", signal, key)
+        if signal is None:
+            return 0
         return play_hook_signal(signal, session_key=key)
     if args.command == "claude-code-hook":
         from signal_light.claude_code_hook import read_hook_input, choose_signal, session_key
@@ -137,6 +140,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         signal = choose_signal(hook_input)
         key = session_key(hook_input, os.environ)
         logger.info("Claude Code Hook 决策结果: 选择信号=%s, Session Key=%s", signal, key)
+        if signal is None:
+            return 0
         return play_hook_signal(signal, session_key=key)
     if args.command == "antigravity-hook":
         from signal_light.antigravity_hook import read_hook_input, choose_signal, session_key, process_and_get_output
@@ -153,13 +158,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         signal = choose_signal(hook_input)
         key = session_key(hook_input, os.environ)
         logger.info("Antigravity Hook 决策结果: 选择信号=%s, Session Key=%s", signal, key)
-        
+
         # 尝试播放信号，即使失败也不抛出导致 AI 挂掉的异常
-        try:
-            play_hook_signal(signal, session_key=key)
-        except Exception as exc:
-            logger.warning("警告: 播放信号灯失败: %s", exc, exc_info=True)
-            print(f"警告: 播放信号灯失败: {exc}", file=sys.stderr)
+        if signal is not None:
+            try:
+                play_hook_signal(signal, session_key=key)
+            except Exception as exc:
+                logger.warning("警告: 播放信号灯失败: %s", exc, exc_info=True)
+                print(f"警告: 播放信号灯失败: {exc}", file=sys.stderr)
 
         # 始终输出符合 Antigravity 契约的输出
         output_data = process_and_get_output(hook_input)
@@ -196,11 +202,16 @@ def list_signals() -> int:
 def play_signal(signal_name: str, *, session_id: str = "global", quiet: bool = False) -> int:
     logger.info("play_signal: signal_name=%s, session_id=%s, quiet=%s", signal_name, session_id, quiet)
     try:
+        mgr = SessionManager()
+        result = mgr.handle_signal(session_id, signal_name)
         conn = esp.get_connection()
-        result = esp.send_signal(conn, signal_name, session_id=session_id)
+        if result.notice_first:
+            esp.send_pattern(conn, "notice_green")
+            time.sleep(2.0)
+        esp.send_pattern(conn, result.pattern, timeout=300)
         if not quiet:
-            print(f"Signal: {signal_name} | Aggregate: {result.get('aggregate', '?')}")
-        logger.info("信号播放成功，聚合状态为: %s", result.get('aggregate'))
+            print(f"Signal: {signal_name} | Pattern: {result.pattern}")
+        logger.info("信号播放成功，pattern=%s, notice_first=%s", result.pattern, result.notice_first)
         return 0
     except esp.ESPConnectionError as exc:
         logger.error("play_signal 失败: %s", exc, exc_info=True)
@@ -211,17 +222,20 @@ def play_signal(signal_name: str, *, session_id: str = "global", quiet: bool = F
 def play_hook_signal(signal_name: str, *, session_key: str = "global") -> int:
     logger.info("play_hook_signal: signal_name=%s, session_key=%s", signal_name, session_key)
     try:
+        mgr = SessionManager()
+        result = mgr.handle_signal(session_key, signal_name)
         conn = esp.get_connection()
-        esp.send_signal(conn, signal_name, session_id=session_key)
+        if result.notice_first:
+            esp.send_pattern(conn, "notice_green")
+            time.sleep(2.0)
+        esp.send_pattern(conn, result.pattern, timeout=300)
 
-        # 触发 Bark 推送逻辑（统一为所有 Hook 触发 Bark 推送）
+        # Bark 推送
         bark_url = os.environ.get("BARK_SERVER_URL", "").strip()
         from signal_light import bark
         if bark_url and bark.should_notify(signal_name):
             logger.info("触发 Bark 推送通知...")
             bark.notify(bark_url, signal_name, session_id=session_key)
-        else:
-            logger.debug("无需触发 Bark 推送（未配置 BARK_SERVER_URL 或当前信号 %s 不需要通知）", signal_name)
 
         return 0
     except esp.ESPConnectionError as exc:
@@ -232,42 +246,44 @@ def play_hook_signal(signal_name: str, *, session_key: str = "global") -> int:
 
 def show_status() -> int:
     logger.info("获取并显示信号灯状态...")
+    mgr = SessionManager()
+    status = mgr.get_status()
+    # Also try ESP status
     try:
         conn = esp.get_connection()
-        status = esp.get_status(conn)
-        print(json.dumps(status, ensure_ascii=False, indent=2))
-        logger.info("成功获取状态: %s", status)
-        return 0
-    except esp.ESPConnectionError as exc:
-        logger.error("show_status 失败: %s", exc, exc_info=True)
-        print(str(exc), file=sys.stderr)
-        return 1
+        esp_status = esp.get_status(conn)
+        status["esp"] = esp_status
+    except esp.ESPConnectionError:
+        status["esp"] = {"error": "unreachable"}
+    print(json.dumps(status, ensure_ascii=False, indent=2))
+    logger.info("成功获取状态: %s", status)
+    return 0
 
 
 def do_reset() -> int:
     logger.info("重置信号灯状态...")
+    mgr = SessionManager()
+    cleared = mgr.reset()
     try:
         conn = esp.get_connection()
-        result = esp.reset(conn)
-        print(f"Reset: {result.get('sessions_cleared', 0)} sessions cleared")
-        logger.info("重置成功: %s sessions cleared", result.get('sessions_cleared', 0))
-        return 0
+        esp.reset(conn)
     except esp.ESPConnectionError as exc:
-        logger.error("do_reset 失败: %s", exc, exc_info=True)
-        print(str(exc), file=sys.stderr)
-        return 1
+        logger.warning("ESP reset failed (sessions already cleared): %s", exc)
+    print(f"Reset: {cleared} sessions cleared")
+    logger.info("重置成功: %s sessions cleared", cleared)
+    return 0
 
 
 def run_test() -> int:
-    """Send red, yellow, green, notice flash sequence."""
+    """Cycle through all LED patterns for hardware testing."""
     logger.info("运行测试序列...")
+    patterns = ["green_on", "work_cycle", "flash_yellow", "flash_red", "notice_green", "off"]
     try:
         conn = esp.get_connection()
-        for sig in ["blocked", "attention", "idle", "session_done"]:
-            logger.info("测试序列: 发送信号 %s", sig)
-            esp.send_signal(conn, sig, session_id="test")
-            time.sleep(1)
-        esp.send_signal(conn, "off", session_id="test")
+        for pattern in patterns:
+            logger.info("测试序列: 发送 pattern %s", pattern)
+            esp.send_pattern(conn, pattern)
+            time.sleep(2)
         print("Test complete.")
         logger.info("测试序列执行完成")
         return 0
